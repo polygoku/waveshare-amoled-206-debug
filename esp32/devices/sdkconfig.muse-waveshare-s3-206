@@ -15,22 +15,29 @@
 
 # Waveshare ESP32-S3-Touch-AMOLED-2.06: ESP32-S3R8 (8 MB octal PSRAM),
 # 32 MB flash, 2.06" 410x502 CO5300 AMOLED over QSPI, FT3168 touch,
-# AXP2101 PMU, ES8311 speaker + mic. Native USB Serial/JTAG (303a:1001).
+# AXP2101 PMU, ES8311 speaker + ES7210 dual microphones. Native USB Serial/JTAG (303a:1001).
 #
 # Pin/fact sources (cite per devices/AGENTS.md, do not guess pins):
 #  - Vendor wiki: https://www.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-2.06
 #    (AMOLED QSPI SDIO0..3 = GPIO 4/5/6/7, SCLK = 11, CS = 12, RST = 8;
 #    I2C0 SDA = 15, SCL = 14; touch FT3168 RST = 9, INT = 38;
-#    audio ES8311 I2S0 DOUT = 40, BCLK = 41, LRC = 45, MCLK = 16,
-#    PA enable = 46; mic ASDOUT = 42; BOOT = GPIO0)
+#    audio I2S DOUT = 40, BCLK = 41, LRC = 45, MCLK = 16,
+#    PA enable = 46; ES7210 ADC ASDOUT = 42; BOOT = GPIO0)
 #  - Vendor repo (clone it, do not read on the web):
 #    https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-2.06
-#    Managed BSP: waveshare/esp32_s3_touch_amoled_2_06 ^2.0.0 (ESP Component Registry)
+#    Managed BSP: waveshare/esp32_s3_touch_amoled_2_06 2.0.0 (ESP Component Registry)
 #
 # Load last, after sdkconfig.muse.
 
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_MUSE_BOARD_WAVESHARE_S3_206=y
+# This watch is monitored through native USB Serial/JTAG (303a:1001).
+# Make it the PRIMARY ESP-IDF console, not UART0 primary + output-only USB
+# secondary. The secondary USB path may not be available before VFS startup.
+# Do not assume the overlay overrides an existing build-*/sdkconfig: check
+# the final generated values before flashing (tools/muse/board.sh enforces it).
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y

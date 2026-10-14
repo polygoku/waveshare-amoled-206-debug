@@ -68,6 +68,28 @@ if [ -n "${MUSE_BENCH:-}" ]; then
     B=$B-bench; defaults="$defaults;devices/sdkconfig.muse-bench"
 fi
 log=/tmp/muse_build_$board.log
+
+# Check the generated config rather than trusting SDKCONFIG_DEFAULTS. A stale
+# build-*/sdkconfig can keep UART0 as primary even with the overlay updated.
+check_s3_206_console() {
+    [ "$board" = s3-206 ] || return 0
+    local cfg="$B/sdkconfig"
+    if [ ! -f "$cfg" ]; then
+        echo "ERROR: $cfg missing. Build s3-206 before flashing." >&2
+        return 1
+    fi
+    if ! grep -qxF 'CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y' "$cfg" ||
+       ! grep -qxF 'CONFIG_ESP_CONSOLE_SECONDARY_NONE=y' "$cfg" ||
+       grep -Eq '^CONFIG_ESP_CONSOLE_(UART_DEFAULT|UART_CUSTOM|SECONDARY_USB_SERIAL_JTAG)=y$' "$cfg"; then
+        echo "ERROR: $cfg is not configured for USB Serial/JTAG primary." >&2
+        grep -E '^CONFIG_ESP_CONSOLE_(USB_SERIAL_JTAG|UART_DEFAULT|UART_CUSTOM|SECONDARY_)' "$cfg" >&2 || true
+        echo "Preserve stale build settings then create a fresh build directory:" >&2
+        echo "  mv '$B' '$B.stale-config-backup'" >&2
+        echo "  tools/muse/board.sh build s3-206" >&2
+        return 1
+    fi
+    echo "Verified s3-206 console: USB Serial/JTAG primary; secondary disabled."
+}
 if [ "$cmd" = build ]; then
     # Boards share managed_components/ with each other and with the Link build,
     # so build one at a time. Each resolves a different dependency set, and the
@@ -80,11 +102,15 @@ if [ "$cmd" = build ]; then
         -DSDKCONFIG_DEFAULTS="$defaults" \
         build > $log 2>&1; rc=$?
     clean
-    grep -E "error:|undefined reference" $log | head -20
-    tail -3 $log
-    exit $rc
+    grep -E "error:|undefined reference" "$log" | head -20 || true
+    tail -3 "$log"
+    [ "$rc" -eq 0 ] || exit "$rc"
+    check_s3_206_console || exit 1
+    exit 0
 fi
-port=$(python "$root/tools/muse/ports.py" $board ${3:-}) || exit 1
+[ "$cmd" = flash ] || { echo "Expected build or flash, got: $cmd" >&2; exit 2; }
+check_s3_206_console || exit 1
+port=$(python "$root/tools/muse/ports.py" "$board" "${3:-}") || exit 1
 esptool="-m esptool"
 [ -n "${paced:-}" ] && esptool="$root/tools/muse/paced_esptool.py"
 cd $B && python $esptool --chip $target -p $port -b $baud --before default-reset --after hard-reset write-flash "@flash_args" 2>&1 | tail -3
