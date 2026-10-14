@@ -20,20 +20,21 @@
  * https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-2.06
  * ESP32-S3R8 (8 MB octal PSRAM), 32 MB flash, 2.06" 410x502 CO5300 AMOLED
  * over QSPI @ 80 MHz, FT3168 capacitive touch (0x38), AXP2101 PMU (0x34),
- * ES8311 codec (speaker + mic), QMI8658 IMU, PCF85063 RTC — all on I2C0.
+ * ES8311 speaker codec, ES7210 dual-microphone ADC, QMI8658 IMU and
+ * PCF85063 RTC — all controlled over the shared BSP I2C bus.
  * BOOT is GPIO0. Native USB Serial/JTAG (303a:1001).
  *
  * Pin/fact sources (per devices/AGENTS.md, do not guess pins):
  *  - Vendor wiki pinout: AMOLED QSPI SDIO0..3 = GPIO 4/5/6/7, SCLK = 11,
  *    CS = 12, RST = 8 (needs a LONG pulse: 200 ms low — short pulses don't
  *    boot the panel); I2C0 SDA = 15, SCL = 14; touch FT3168 RST = 9,
- *    INT = 38 (needs reg 0xA5 = monitor mode at init); audio ES8311 I2S0
+ *    INT = 38 (needs reg 0xA5 = monitor mode at init); audio I2S
  *    DOUT = 40, BCLK = 41, LRC = 45, MCLK = 16, PA enable = 46 (high only
- *    while playing audio); mic ASDOUT = 42.
+ *    while playing audio); ES7210 microphone ADC ASDOUT = 42.
  *  - Managed BSP: waveshare/esp32_s3_touch_amoled_2_06 ^2.0.0 (ESP Component
- *    Registry), which drives the CO5300 panel, FT3168 touch, ES8311 and
- *    AXP2101. Muse uses it for display, touch, I2C and PMU; audio is wired
- *    by hand so the ES8311 runs in ADC+DAC mode for the onboard mic.
+ *    Registry), which drives the CO5300 panel, FT3168 touch, ES8311
+ *    speaker DAC and ES7210 dual-microphone ADC. Muse uses the BSP audio
+ *    routines to share its I2S bus with the two independent codecs.
  */
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
@@ -85,6 +86,9 @@ static esp_err_t init(void)
     ESP_RETURN_ON_ERROR(muse_gpio_button_init(&s_boot, BOOT_GPIO), TAG, "boot button");
     if (muse_pmu_init(bsp_i2c_get_handle(), true) != ESP_OK) {
         ESP_LOGW(TAG, "no PMU: PWR button and battery unavailable");
+    } else {
+        /* Discard the latched PWR press that just booted the device. */
+        (void)muse_pmu_poll_key();
     }
     return ESP_OK;
 }
@@ -103,7 +107,7 @@ static lv_display_t *display_start(lv_indev_t **touch)
             ESP_LOGW(TAG, "FT3168 monitor-mode write failed; touch may sleep");
         }
     }
-    *touch = bsp_display_get_input_dev();
+    *touch = disp ? bsp_display_get_input_dev() : NULL;
     return disp;
 }
 
@@ -118,16 +122,14 @@ static void set_brightness(int pct)
 }
 
 /*
- * ES8311 in ADC+DAC mode: speaker on I2S0 TX, onboard mic on I2S0 RX
- * (ASDOUT = GPIO42, slaved to the codec clocks). PA enable (GPIO46) is
- * driven high by the codec driver only while the speaker is open.
+ * The S3-2.06 has TWO audio ICs: ES8311 is the speaker DAC, while ES7210
+ * digitizes the two onboard microphones. Use the vendor BSP's codec setup,
+ * not an ES8311 ADC handle (which cannot receive ES7210's I2S data).
  */
 static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t *mic)
 {
-    i2s_chan_handle_t tx, rx;
-    i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(CONFIG_BSP_I2S_NUM, I2S_ROLE_MASTER);
-    chan_cfg.auto_clear = true;
-    ESP_RETURN_ON_ERROR(i2s_new_channel(&chan_cfg, &tx, &rx), TAG, "i2s channel");
+    /* Muse opens a duplex 16 kHz, 16-bit, two-slot stream. The BSP default
+     * (22.05 kHz mono) is not compatible, so initialize I2S explicitly. */
     const i2s_std_config_t std_cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(MUSE_AUDIO_RATE),
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
@@ -139,51 +141,9 @@ static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t 
             .din = BSP_I2S_DSIN,
         },
     };
-    ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(tx, &std_cfg), TAG, "i2s tx");
-    ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(rx, &std_cfg), TAG, "i2s rx");
-    ESP_RETURN_ON_ERROR(i2s_channel_enable(tx), TAG, "i2s tx on");
-    ESP_RETURN_ON_ERROR(i2s_channel_enable(rx), TAG, "i2s rx on");
-
-    audio_codec_i2s_cfg_t i2s_cfg = {
-        .port = CONFIG_BSP_I2S_NUM,
-        .rx_handle = rx,
-        .tx_handle = tx,
-    };
-    const audio_codec_data_if_t *data_if = audio_codec_new_i2s_data(&i2s_cfg);
-    audio_codec_i2c_cfg_t i2c_cfg = {
-        .port = BSP_I2C_NUM,
-        .addr = ES8311_CODEC_DEFAULT_ADDR,
-        .bus_handle = bsp_i2c_get_handle(),
-    };
-    const audio_codec_ctrl_if_t *ctrl_if = audio_codec_new_i2c_ctrl(&i2c_cfg);
-    const audio_codec_gpio_if_t *gpio_if = audio_codec_new_gpio();
-    ESP_RETURN_ON_FALSE(data_if && ctrl_if && gpio_if, ESP_ERR_NO_MEM, TAG, "codec interfaces");
-
-    es8311_codec_cfg_t es_cfg = {
-        .ctrl_if = ctrl_if,
-        .gpio_if = gpio_if,
-        .codec_mode = ESP_CODEC_DEV_WORK_MODE_BOTH,
-        .pa_pin = BSP_POWER_AMP_IO,
-        .pa_reverted = false,   /* PA enable is active high */
-        .master_mode = false,
-        .use_mclk = true,
-        .hw_gain = { .pa_voltage = 5.0, .codec_dac_voltage = 3.3 },
-    };
-    const audio_codec_if_t *codec = es8311_codec_new(&es_cfg);
-    ESP_RETURN_ON_FALSE(codec, ESP_FAIL, TAG, "ES8311 not responding");
-
-    esp_codec_dev_cfg_t out_cfg = {
-        .dev_type = ESP_CODEC_DEV_TYPE_OUT,
-        .codec_if = codec,
-        .data_if = data_if,
-    };
-    esp_codec_dev_cfg_t in_cfg = {
-        .dev_type = ESP_CODEC_DEV_TYPE_IN,
-        .codec_if = codec,
-        .data_if = data_if,
-    };
-    *spk = esp_codec_dev_new(&out_cfg);
-    *mic = esp_codec_dev_new(&in_cfg);
+    ESP_RETURN_ON_ERROR(bsp_audio_init(&std_cfg), TAG, "i2s");
+    *spk = bsp_audio_codec_speaker_init();
+    *mic = bsp_audio_codec_microphone_init();
     return *spk && *mic ? ESP_OK : ESP_FAIL;
 }
 
@@ -217,7 +177,7 @@ static const muse_board_t s_board = {
     .display_unlock = bsp_display_unlock,
     .set_brightness = set_brightness,
     .audio_init = audio_init,
-    .mic_slot = 0,              /* one mic on the ES8311 ADC */
+    .mic_slot = -1,             /* ES7210 MIC1 + MIC2: mix the two microphones */
     .poll_buttons = poll_buttons,
     .read_power = muse_pmu_read_power,
     .power_off = muse_pmu_power_off,
