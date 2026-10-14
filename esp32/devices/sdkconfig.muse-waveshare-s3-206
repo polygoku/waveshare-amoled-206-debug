@@ -31,6 +31,9 @@
 
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_MUSE_BOARD_WAVESHARE_S3_206=y
+# Native USB (303a:1001) is wired to Serial/JTAG; ESP-IDF otherwise sends
+# app/bootloader logs to UART0, leaving the USB monitor apparently silent.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
