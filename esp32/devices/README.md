@@ -312,17 +312,30 @@ tools/muse/board.sh build s3-206
 tools/muse/board.sh flash s3-206 /dev/cu.usbmodemXXXX
 ```
 
-Set your SDK token in `build-muse-waveshare-c6-206/sdkconfig` before building
-(see the main README). The board has 16 MB flash and no PSRAM, so it uses
-Link's session for voice notes with text replies. Images, the home-network
-tunnel, and spoken replies are not supported by this profile. The IMU and RTC
-are not exposed by this port. Battery life and suspend behavior need on-device
-measurement; this profile does not add automatic light sleep.
+This **S3** board has **32 MB flash and 8 MB octal PSRAM**, unlike the
+C6-2.06 board described above. Its Muse profile enables the full on-screen UI,
+image handling, and the PSRAM-dependent features configured by
+`devices/sdkconfig.muse`. Set the Muse SDK token using the main README's
+menuconfig instructions before building the complete firmware. The IMU and
+RTC are not yet exposed through this port; battery life, automatic light sleep,
+and wake behavior still require measurements on the physical board.
 
-The v2.0.0 vendor BSP takes its draw-buffer height from Kconfig rather than
-`bsp_display_cfg_t`. The overlay uses 8 lines instead of the 100-line default
-and selects I2S0, the C6's only I2S peripheral. Keep these settings when
-updating the BSP.
+**Audio:** The ES8311 drives speaker playback; the **ES7210** digitizes both
+onboard microphones. The audio initialization must use the BSP's separate
+speaker and microphone codec handles on a shared, explicit **16 kHz,
+16-bit stereo I2S** stream (Muse mixes the microphone channels to mono).
+Do not configure the ES8311 as both the speaker and microphone codec.
+
+The v2.0.0 vendor BSP takes its LVGL draw-buffer height from Kconfig rather
+than the runtime `bsp_display_cfg_t`. This S3 overlay uses 8 lines instead
+of the 100-line default. Keep that setting unless DMA/internal-memory
+measurements justify a change.
+
+**Repository integration:** This debugging repository contains only selected
+`esp32/` files, not the full Muse SDK. Copy or apply them to a compatible
+checkout of [facebookincubator/muse-gadget-sdk](https://github.com/facebookincubator/muse-gadget-sdk)
+before trying to run `tools/muse/board.sh build s3-206`. Do not treat a source
+review or configuration check as a successful firmware build.
 
 Before treating a build as hardware-validated, check cold boot and reboot,
 all touch edges, BOOT/PWR press and release, BLE pairing, Wi-Fi reconnect,
