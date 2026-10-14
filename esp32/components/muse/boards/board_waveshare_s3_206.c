@@ -41,7 +41,6 @@
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
 #include "esp_check.h"
-#include "esp_codec_dev_defaults.h"
 #include "esp_log.h"
 
 #include "muse_audio.h"
@@ -53,16 +52,16 @@ static const char *TAG = "board";
 #define BOOT_GPIO GPIO_NUM_0
 #define PMU_KEY_EVERY 2         /* poll latched PWR edges every 20 ms */
 
-/* FT3168 touch controller: put it in monitor (active) mode at init. */
+/* FT3168 touch controller: ensure its power mode is active at init. */
 #define TOUCH_ADDR 0x38
 #define TOUCH_REG_POWER_MODE 0xA5
 
 static muse_gpio_button_t s_boot;
 
-static esp_err_t touch_monitor_mode(void)
+static esp_err_t touch_active_mode(void)
 {
     /* The BSP's FT5x06 driver leaves the FT3168 in whatever power mode it
-     * woke in; register 0xA5 = 0 selects monitor (active) mode. */
+     * woke in; power-mode register 0xA5 = 0 selects active mode. */
     i2c_master_bus_handle_t bus = bsp_i2c_get_handle();
     if (!bus) {
         return ESP_ERR_INVALID_STATE;
@@ -103,8 +102,8 @@ static lv_display_t *display_start(lv_indev_t **touch)
     const bsp_display_cfg_t cfg = { .lvgl_port_cfg = port_cfg };
     lv_display_t *disp = bsp_display_start_with_config(&cfg);
     if (disp) {
-        if (touch_monitor_mode() != ESP_OK) {
-            ESP_LOGW(TAG, "FT3168 monitor-mode write failed; touch may sleep");
+        if (touch_active_mode() != ESP_OK) {
+            ESP_LOGW(TAG, "FT3168 active-mode write failed; touch may sleep");
         }
     }
     *touch = disp ? bsp_display_get_input_dev() : NULL;
