@@ -31,9 +31,13 @@
 
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_MUSE_BOARD_WAVESHARE_S3_206=y
-# Native USB (303a:1001) is wired to Serial/JTAG; ESP-IDF otherwise sends
-# app/bootloader logs to UART0, leaving the USB monitor apparently silent.
+# This watch is monitored through native USB Serial/JTAG (303a:1001).
+# Make it the PRIMARY ESP-IDF console, not UART0 primary + output-only USB
+# secondary. The secondary USB path may not be available before VFS startup.
+# Do not assume the overlay overrides an existing build-*/sdkconfig: check
+# the final generated values before flashing (tools/muse/board.sh enforces it).
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
