@@ -195,4 +195,31 @@ menu "Muse"
             them. Needs PSRAM. Without it, voice notes go over Home Link's own
             session to its paired VM and replies are shown as text.
 
+    config MUSE_TTS_URL
+        string "TTS endpoint URL (OpenAI-compatible)"
+        depends on MUSE_HATCH
+        default "https://api.openai.com/v1/audio/speech"
+        help
+            HTTPS endpoint that turns reply text into MP3 audio. Must accept
+            an OpenAI-style JSON body {"model","input","voice",
+            "response_format":"mp3"} and return MP3 bytes. Leave the API key
+            empty to keep replies as silent captions.
+
+    config MUSE_TTS_API_KEY
+        string "TTS API key"
+        depends on MUSE_HATCH
+        default ""
+        help
+            Bearer token sent as "Authorization: Bearer <key>". Empty means
+            no speech synthesis: replies stay as paced captions. Set it with
+            idf.py menuconfig, never by editing a committed file.
+
+    config MUSE_TTS_VOICE
+        string "TTS voice name"
+        depends on MUSE_HATCH
+        default "alloy"
+        help
+            Voice passed to the TTS endpoint (e.g. alloy, echo, fable, onyx,
+            nova, shimmer for OpenAI).
+
 endmenu
