@@ -74,6 +74,17 @@ extern "C" {
 }
 #include "muse_chat_priv.h"
 
+/* The HomeHub voice-only build also compiles this file without MUSE_HATCH. */
+#if CONFIG_MUSE_HATCH
+#define MUSE_TTS_ENDPOINT CONFIG_MUSE_TTS_URL
+#define MUSE_TTS_SECRET CONFIG_MUSE_TTS_API_KEY
+#define MUSE_TTS_SPEAKER CONFIG_MUSE_TTS_VOICE
+#else
+#define MUSE_TTS_ENDPOINT ""
+#define MUSE_TTS_SECRET ""
+#define MUSE_TTS_SPEAKER ""
+#endif
+
 #include <xplat/noise/core/ClientSession.h>
 #include <xplat/noise/core/PsaCryptoBackend.h>
 #include <xplat/noise/core/ServiceCodec.h>
@@ -1028,6 +1039,7 @@ static void turn_begin(uint32_t gen)
             return;
         }
         s_turn.phase = P_LISTEN;
+        ESP_LOGI(TAG, "PTT state: LISTEN (note), gen=%u", (unsigned)gen);
         return;
     }
     char path[64];
@@ -1039,6 +1051,7 @@ static void turn_begin(uint32_t gen)
         return;
     }
     s_turn.phase = P_LISTEN;
+    ESP_LOGI(TAG, "PTT state: LISTEN (dictation), gen=%u", (unsigned)gen);
 }
 
 /* Moves mic audio to the dictation stream, paced like a live mic. */
@@ -1165,6 +1178,7 @@ static bool record_note(void)
     s_turn.chat_posted = true;
     s_turn.chat_us = s_turn.last_event_us = now_us();
     s_turn.phase = P_WAIT_REPLY;
+    ESP_LOGI(TAG, "PTT state: WAIT_REPLY (note sent), gen=%u", (unsigned)s_turn.gen);
     return true;
 }
 
@@ -1565,8 +1579,8 @@ static esp_err_t tts_http_event(esp_http_client_event_t *evt)
 /* Starts a nonblocking HTTPS fetch. Keep the POST body until completion. */
 static bool tts_begin(const char *text)
 {
-    const char *url = CONFIG_MUSE_TTS_URL;
-    const char *key = CONFIG_MUSE_TTS_API_KEY;
+    const char *url = MUSE_TTS_ENDPOINT;
+    const char *key = MUSE_TTS_SECRET;
     if (!url[0] || !key[0] || !text[0]) {
         return false;
     }
@@ -1581,7 +1595,7 @@ static bool tts_begin(const char *text)
     }
     cJSON_AddStringToObject(body, "model", "tts-1");
     cJSON_AddStringToObject(body, "input", text);
-    cJSON_AddStringToObject(body, "voice", CONFIG_MUSE_TTS_VOICE);
+    cJSON_AddStringToObject(body, "voice", MUSE_TTS_SPEAKER);
     cJSON_AddStringToObject(body, "response_format", "mp3");
     s_tts_payload = cJSON_PrintUnformatted(body);
     cJSON_Delete(body);
@@ -1644,7 +1658,8 @@ static void tts_poll(void)
     }
     int status = esp_http_client_get_status_code(s_tts_client);
     size_t received = s_tts_bytes;
-    bool ok = err == ESP_OK && !timeout && !s_tts_overflow && status == 200 && received > 0;
+    bool overflow = s_tts_overflow;
+    bool ok = err == ESP_OK && !timeout && !overflow && status == 200 && received > 0;
     tts_close();
     if (ok) {
         s_turn.mp3_ended = true; /* decoder can now drain the last MP3 frame */
@@ -1652,7 +1667,7 @@ static void tts_poll(void)
     } else {
         ESP_LOGW(TAG, "TTS unavailable: %s, HTTP %d, %u bytes%s; using captions",
                  timeout ? "overall timeout" : esp_err_to_name(err), status, (unsigned)received,
-                 s_tts_overflow ? " (buffer overflow)" : "");
+                 overflow ? " (buffer overflow)" : "");
         if (s_turn.tts_msg >= 0 && s_turn.tts_msg < s_turn.nmsgs) {
             tts_use_silent_captions(s_turn.tts_msg);
         }
@@ -1670,7 +1685,7 @@ static void start_tts(void)
             continue;
         }
         const char *reply = s_turn.texts ? s_turn.texts + i * TEXT_MAX : "";
-        if (reply[0] && CONFIG_MUSE_TTS_API_KEY[0]) {
+        if (reply[0] && MUSE_TTS_SECRET[0]) {
             m.tts = TTS_ACTIVE;
             s_turn.tts_msg = i;
             s_turn.silent = false;
@@ -2073,6 +2088,11 @@ static void handle(const cmd_t &cmd)
     case CMD_END:
         if (cmd.gen == s_turn.gen && !s_turn.text && s_turn.phase == P_LISTEN) {
             s_turn.end_requested = true;
+            ESP_LOGI(TAG, "PTT release accepted: gen=%u, audio_bytes=%u",
+                     (unsigned)cmd.gen, (unsigned)s_turn.pcm_bytes);
+        } else {
+            ESP_LOGW(TAG, "PTT release ignored: cmd gen=%u, turn gen=%u, phase=%d, text=%d",
+                     (unsigned)cmd.gen, (unsigned)s_turn.gen, (int)s_turn.phase, (int)s_turn.text);
         }
         break;
     case CMD_CANCEL:
