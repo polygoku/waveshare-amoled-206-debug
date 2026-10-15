@@ -1,0 +1,22 @@
+--- a/managed_components/waveshare__esp32_s3_touch_amoled_2_06/esp32_s3_touch_amoled_2_06.c
++++ b/managed_components/waveshare__esp32_s3_touch_amoled_2_06/esp32_s3_touch_amoled_2_06.c
+@@ -432,11 +432,18 @@
+                                                                  BSP_LCD_DATA2,
+                                                                  BSP_LCD_DATA3,
+                                                                  config->max_transfer_sz);
+     ESP_ERROR_CHECK(spi_bus_initialize(BSP_LCD_SPI_NUM, &buscfg, SPI_DMA_CH_AUTO));
+ 
+-    const esp_lcd_panel_io_spi_config_t io_config = SH8601_PANEL_IO_QSPI_CONFIG(BSP_LCD_CS, NULL, NULL);
++    /* ESP32-S3 SPI DMA TX underflow was reproduced when I2S speaker and
++     * Wi-Fi/PSRAM are active. Preserve the vendor SH8601 QSPI protocol while
++     * halving pixel-clock bandwidth and reducing outstanding transactions.
++     * Revisit only after repeated PTT + spoken-reply tests are error-free.
++     */
++    esp_lcd_panel_io_spi_config_t io_config = SH8601_PANEL_IO_QSPI_CONFIG(BSP_LCD_CS, NULL, NULL);
++    io_config.pclk_hz = 20 * 1000 * 1000;
++    io_config.trans_queue_depth = 4;
+ 
+     sh8601_vendor_config_t vendor_config = {
+         .init_cmds = lcd_init_cmds,
+         .init_cmds_size = sizeof(lcd_init_cmds) / sizeof(lcd_init_cmds[0]),
+         .flags = {
