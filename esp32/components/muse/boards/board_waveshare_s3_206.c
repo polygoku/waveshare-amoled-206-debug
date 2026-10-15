@@ -99,7 +99,22 @@ static lv_display_t *display_start(lv_indev_t **touch)
     port_cfg.task_priority = 1;
     /* BSP v2.0.0 takes its buffer height from Kconfig, ignoring the buffer
      * fields here. The overlay sets CONFIG_BSP_DISPLAY_LVGL_BUF_HEIGHT=8. */
-    const bsp_display_cfg_t cfg = { .lvgl_port_cfg = port_cfg };
+    /*
+     * The vendor bsp_display_start() sets buff_dma=true/buff_spiram=false.
+     * Our custom config previously zero-initialized BOTH flags, losing that
+     * safety invariant.  The SH8601 QSPI DMA engine must not receive generic
+     * (potentially PSRAM-backed/non-DMA) LVGL draw buffers during PTT audio
+     * and Wi-Fi traffic.  Keep a single small internal DMA buffer; the BSP
+     * still derives its height from CONFIG_BSP_DISPLAY_LVGL_BUF_HEIGHT=8.
+     */
+    const bsp_display_cfg_t cfg = {
+        .lvgl_port_cfg = port_cfg,
+        .double_buffer = false,
+        .flags = {
+            .buff_dma = true,
+            .buff_spiram = false,
+        },
+    };
     lv_display_t *disp = bsp_display_start_with_config(&cfg);
     if (disp) {
         if (touch_active_mode() != ESP_OK) {
