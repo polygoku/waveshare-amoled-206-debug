@@ -1,0 +1,41 @@
+--- a/managed_components/waveshare__esp32_s3_touch_amoled_2_06/esp32_s3_touch_amoled_2_06.c
++++ b/managed_components/waveshare__esp32_s3_touch_amoled_2_06/esp32_s3_touch_amoled_2_06.c
+@@ -552,25 +552,19 @@
+             .swap_bytes = true,
+ #endif
+         }};
+-    const lvgl_port_display_rgb_cfg_t rgb_cfg = {
+-        .flags = {
+-#if CONFIG_BSP_LCD_RGB_BOUNCE_BUFFER_MODE
+-            .bb_mode = 1,
+-#else
+-            .bb_mode = 0,
+-#endif
+-#if CONFIG_BSP_DISPLAY_LVGL_AVOID_TEAR
+-            .avoid_tearing = true,
+-#else
+-            .avoid_tearing = false,
+-#endif
+-        }};
+-
+-#if CONFIG_BSP_LCD_RGB_BOUNCE_BUFFER_MODE
+-    ESP_LOGW(TAG, "CONFIG_BSP_LCD_RGB_BOUNCE_BUFFER_MODE");
+-#endif
+-
+-    lv_display_t *disp = lvgl_port_add_disp_rgb(&disp_cfg, &rgb_cfg);
++    /*
++     * This is a SH8601 QSPI panel (SPI transactions), not an RGB LCD.
++     * The RGB LVGL adapter flushes immediately after draw_bitmap returns,
++     * although SPI pixel transfers are still queued for DMA. That lets LVGL
++     * overwrite the draw buffer while the LCD still reads it (horizontal
++     * corruption) and can create unbounded SPI transaction recycling stalls.
++     *
++     * The SPI adapter registers on_color_trans_done on io_handle and
++     * acknowledges LVGL flush only from the SPI completion callback.
++     * Keep the existing small internal DMA buffer and conservative QSPI
++     * settings unchanged until this independent sync fix is validated.
++     */
++    lv_display_t *disp = lvgl_port_add_disp(&disp_cfg);
+     if (!disp)
+     {
+         return NULL;
